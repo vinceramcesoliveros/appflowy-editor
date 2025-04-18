@@ -1,10 +1,9 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-
 import 'package:appflowy_editor/appflowy_editor.dart';
 import 'package:appflowy_editor/src/editor/editor_component/service/selection/mobile_selection_service.dart';
 import 'package:appflowy_editor/src/editor/editor_component/service/selection/shared.dart';
 import 'package:appflowy_editor/src/service/selection/selection_gesture.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class DesktopSelectionServiceWidget extends StatefulWidget {
@@ -152,6 +151,10 @@ class _DesktopSelectionServiceWidgetState
     final List<Node> sortedNodes = editorState.getVisibleNodes(
       context.read<EditorScrollController>(),
     );
+
+    if (sortedNodes.isEmpty) {
+      return null;
+    }
 
     return editorState.getNodeInOffset(
       sortedNodes,
@@ -434,12 +437,21 @@ class _DesktopSelectionServiceWidgetState
   void renderDropTargetForOffset(
     Offset offset, {
     DragAreaBuilder? builder,
+    DragTargetNodeInterceptor? interceptor,
   }) {
     removeDropTarget();
 
-    final node = getNodeInOffset(offset);
-    final selectable = node?.selectable;
-    if (node == null || selectable == null) {
+    Node? node = getNodeInOffset(offset);
+    if (node == null) {
+      return;
+    }
+
+    if (interceptor != null) {
+      node = interceptor(context, node);
+    }
+
+    final selectable = node.selectable;
+    if (selectable == null) {
       return;
     }
 
@@ -458,7 +470,7 @@ class _DesktopSelectionServiceWidgetState
 
     _dropTargetEntry = OverlayEntry(
       builder: (context) {
-        if (builder != null) {
+        if (builder != null && node != null) {
           return builder(
             context,
             DragAreaBuilderData(
@@ -504,9 +516,21 @@ class _DesktopSelectionServiceWidgetState
   }
 
   @override
-  DropTargetRenderData? getDropTargetRenderData(Offset offset) {
-    final node = getNodeInOffset(offset);
-    final selectable = node?.selectable;
+  DropTargetRenderData? getDropTargetRenderData(
+    Offset offset, {
+    DragTargetNodeInterceptor? interceptor,
+  }) {
+    Node? node = getNodeInOffset(offset);
+
+    if (node == null) {
+      return null;
+    }
+
+    if (interceptor != null) {
+      node = interceptor(context, node);
+    }
+
+    final selectable = node.selectable;
     if (selectable == null) {
       return null;
     }
@@ -524,10 +548,10 @@ class _DesktopSelectionServiceWidgetState
 
     final isCloserToStart = topDistance < bottomDistance;
 
-    final dropPath = isCloserToStart ? node?.path : node?.path.next;
+    final dropPath = isCloserToStart ? node.path : node.path.next;
 
     return DropTargetRenderData(
-      dropPath: dropPath ?? node?.path,
+      dropPath: dropPath,
       cursorNode: node,
     );
   }
