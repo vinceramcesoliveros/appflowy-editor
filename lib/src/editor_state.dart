@@ -92,8 +92,10 @@ enum TransactionTime {
 class EditorState {
   EditorState({
     required this.document,
-    this.minHistoryItemDuration = const Duration(milliseconds: 200),
+    this.minHistoryItemDuration = const Duration(milliseconds: 50),
+    int? maxHistoryItemSize,
   }) {
+    undoManager = UndoManager(maxHistoryItemSize ?? 200);
     undoManager.state = this;
   }
 
@@ -216,6 +218,8 @@ class EditorState {
   Stream<EditorTransactionValue> get transactionStream => _observer.stream;
   final StreamController<EditorTransactionValue> _observer =
       StreamController.broadcast(sync: true);
+  final StreamController<EditorTransactionValue> _asyncObserver =
+      StreamController.broadcast();
 
   /// Store the toggled format style, like bold, italic, etc.
   /// All the values must be the key from [AppFlowyRichTextKeys.supportToggled].
@@ -250,7 +254,7 @@ class EditorState {
     _sliceUpcomingAttributes = value;
   }
 
-  final UndoManager undoManager = UndoManager();
+  late final UndoManager undoManager;
 
   Transaction get transaction {
     final transaction = Transaction(document: document);
@@ -266,6 +270,24 @@ class EditorState {
 
   // only used for testing
   bool disableSealTimer = false;
+
+  /// The rules to apply to the document.
+  List<DocumentRule> get documentRules => _documentRules;
+  List<DocumentRule> _documentRules = [];
+  set documentRules(List<DocumentRule> value) {
+    _documentRules = value;
+
+    _subscription?.cancel();
+    _subscription = _asyncObserver.stream.listen((value) async {
+      for (final rule in _documentRules) {
+        if (rule.shouldApply(editorState: this, value: value)) {
+          await rule.apply(editorState: this, value: value);
+        }
+      }
+    });
+  }
+
+  StreamSubscription? _subscription;
 
   @Deprecated('use editorState.selection instead')
   Selection? _cursorSelection;
@@ -354,11 +376,13 @@ class EditorState {
   void dispose() {
     isDisposed = true;
     _observer.close();
+    _asyncObserver.close();
     _debouncedSealHistoryItemTimer?.cancel();
     onDispose.value += 1;
     onDispose.dispose();
     document.dispose();
     selectionNotifier.dispose();
+    _subscription?.cancel();
     _onScrollViewScrolledListeners.clear();
   }
 
@@ -398,11 +422,19 @@ class EditorState {
         _observer.add((TransactionTime.before, transaction, options));
       }
 
+      if (!_asyncObserver.isClosed) {
+        _asyncObserver.add((TransactionTime.before, transaction, options));
+      }
+
       _applyTransactionInLocal(transaction);
 
       // broadcast to other users here, after applying the transaction
       if (!_observer.isClosed) {
         _observer.add((TransactionTime.after, transaction, options));
+      }
+
+      if (!_asyncObserver.isClosed) {
+        _asyncObserver.add((TransactionTime.after, transaction, options));
       }
 
       _recordRedoOrUndo(options, transaction, skipHistoryDebounce);
